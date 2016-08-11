@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/fatih/color"
@@ -15,12 +16,17 @@ import (
 type argT struct {
 	cli.Helper
 	Layer int  `cli:"la" usage:"crawl layer ,a int type,default is 1" dft:"1"`
-	Zone  bool `cli:"!local" usage:"use this command to crawl the URL under the same domain"`
+	Zone  bool `cli:"local" usage:"use this command to crawl the URL under the same domain" dft:"false"`
 	// stroe bool `cli:"!stroe" usage:"use this command to stroe the url "`
 }
 
 //crawl layer
 var layer int
+var urls []string
+var domain = "http://www.dirtytao.com/"
+
+//  seeker  --la 	 default is OFF
+var localFlag bool
 
 //Processor
 type SeekerProcessor struct {
@@ -34,7 +40,6 @@ func NewSeeker() *SeekerProcessor {
 //Process
 func (object *SeekerProcessor) Process(p *page.Page) {
 
-	var urls []string
 	if !p.IsSucc() {
 		color.Red(p.Errormsg())
 		return
@@ -46,10 +51,25 @@ func (object *SeekerProcessor) Process(p *page.Page) {
 		urls = append(urls, value)
 		p.AddField(name, value)
 	})
-
+	//过滤URLS
+	var filteredUrl []string
 	//add urls to scheduler
+
+	if localFlag {
+		//only crawl the local domain
+		for i := 0; i < len(urls); i++ {
+			if !strings.Contains(urls[i], domain) {
+				filteredUrl = append(filteredUrl, urls[i])
+				// color.Red("%s", urls[i])
+			}
+		}
+		p.AddTargetRequests(filteredUrl, "html")
+	} else {
+		filteredUrl = urls
+	}
+
 	if layer-1 > 0 {
-		p.AddTargetRequests(urls, "html")
+		p.AddTargetRequests(filteredUrl, "html")
 		layer--
 	}
 
@@ -61,26 +81,27 @@ func (object *SeekerProcessor) Finish() {
 
 func main() {
 
-	sp := spider.NewSpider(NewSeeker(), "DoubanSeeker")
-	//Douban Root diretory
-	req := request.NewRequest("http://www.dirtytao.com/", "html", "", "GET", "", nil, nil, nil, nil)
+	sp := spider.NewSpider(NewSeeker(), "DoubanSeeker").AddUrl(domain, "html")
+	//domain's ROOT
+	req := request.NewRequest(domain, "html", "", "GET", "", nil, nil, nil, nil)
 
 	//Run Client
 	cli.Run(new(argT), func(ctx *cli.Context) error {
 
 		argv := ctx.Argv().(*argT)
 		layer = argv.Layer
-		if argv.Zone {
-			//TODO:crawl the local domain
-		}
+		localFlag = argv.Zone
 
 		// layer = argv.Layer
 		pageItems := sp.SetThreadnum(4).SetScheduler(scheduler.NewQueueScheduler(true)).GetByRequest(req)
+		//	sp.SetThreadnum(4).SetScheduler(scheduler.NewQueueScheduler(true)).AddPipeline(pipeline.NewPipelineConsole()).Run()
 		// color.Red("%d", layer)
+
 		fmt.Println("-----------------------------------Result---------------------------------")
 		for name, value := range pageItems.GetAll() {
 			color.Green(name + "\t:\t" + value + "\n")
 		}
+
 		return nil
 	}, "cli for the tinny_seeker")
 }
