@@ -1,5 +1,8 @@
 # tinny_seeker
 
+## 爬虫框架说明
+[go-spider](https://github.com/hu17889/go_spider/wiki/%E4%B8%AD%E6%96%87%E6%96%87%E6%A1%A3)
+
 ## feature:
 
 * 爬虫(Spider)
