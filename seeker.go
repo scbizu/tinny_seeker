@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -51,20 +52,33 @@ func (object *SeekerProcessor) Process(p *page.Page) {
 		value, _ := s.Attr("href")
 		//	name := s.Text()
 		urls = append(urls, value)
-		req := p.GetRequest()
+		// req := p.GetRequest()
 		//p.AddField(name, value)
-		//	resp, _ := downloader.ConnectByHttp(p, req)
-		//	p.AddField(value, resp.Status)
-		p.AddField(value, req.GetMethod())
+
+		// p.AddField(value, req.GetMethod())
 	})
 	//CASE:<form action=""></form>
 	query.Find("form").Each(func(i int, s *goquery.Selection) {
+
 		value, _ := s.Attr("action")
 		value = AutofillUrl(targetURL, value)
+
 		method, _ := s.Attr("method")
-		urls = append(urls, value)
-		p.AddField(value, method)
+		if method == "get" {
+			//	name:=s.Children().Children().Attr("name")
+			resp, err := http.Get(value + "?s=4%'and 1=2 and '%' ='")
+			resp1, err := http.Get(value + "?s=4%'and 1=1 and '%' ='")
+			if err != nil {
+				color.Red("%s", err)
+			}
+			if resp.StatusCode == 200 && resp1.StatusCode == 200 {
+				p.AddField(value, "searchbar SQL injection test pass!")
+			} else {
+				p.AddField(value, resp.Status+"\t"+resp1.Status)
+			}
+		}
 	})
+
 	//过滤URLS
 	var filteredUrl []string
 	//add urls to scheduler
@@ -122,7 +136,7 @@ func main() {
 		localFlag = argv.Zone
 
 		// layer = argv.Layer
-		pageItems := sp.SetThreadnum(1).SetScheduler(scheduler.NewQueueScheduler(true)).SetSleepTime("rand", 800, 1500).GetByRequest(req)
+		pageItems := sp.SetThreadnum(2).SetScheduler(scheduler.NewQueueScheduler(true)).SetSleepTime("rand", 800, 1500).GetByRequest(req)
 		//	sp.SetThreadnum(4).SetScheduler(scheduler.NewQueueScheduler(true)).AddPipeline(pipeline.NewPipelineConsole()).Run()
 		// color.Red("%d", layer)
 
