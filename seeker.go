@@ -23,7 +23,8 @@ type argT struct {
 //crawl layer
 var layer int
 var urls []string
-var domain = "http://www.dirtytao.com/"
+var domain = "dirtytao.com"
+var targetURL = "http://www.dirtytao.com/"
 
 //  seeker  --la 	 default is OFF
 var localFlag bool
@@ -45,11 +46,24 @@ func (object *SeekerProcessor) Process(p *page.Page) {
 		return
 	}
 	query := p.GetHtmlParser()
+	//CASE:<a href="" />
 	query.Find("a").Each(func(i int, s *goquery.Selection) {
 		value, _ := s.Attr("href")
-		name := s.Text()
+		//	name := s.Text()
 		urls = append(urls, value)
-		p.AddField(name, value)
+		req := p.GetRequest()
+		//p.AddField(name, value)
+		//	resp, _ := downloader.ConnectByHttp(p, req)
+		//	p.AddField(value, resp.Status)
+		p.AddField(value, req.GetMethod())
+	})
+	//CASE:<form action=""></form>
+	query.Find("form").Each(func(i int, s *goquery.Selection) {
+		value, _ := s.Attr("action")
+		value = AutofillUrl(targetURL, value)
+		method, _ := s.Attr("method")
+		urls = append(urls, value)
+		p.AddField(value, method)
 	})
 	//过滤URLS
 	var filteredUrl []string
@@ -58,14 +72,21 @@ func (object *SeekerProcessor) Process(p *page.Page) {
 	if localFlag {
 		//only crawl the local domain
 		for i := 0; i < len(urls); i++ {
-			if !strings.Contains(urls[i], domain) {
+			urls[i] = AutofillUrl(targetURL, urls[i])
+			if strings.Contains(urls[i], domain) && !strings.Contains(urls[i], "javascript") {
 				filteredUrl = append(filteredUrl, urls[i])
 				// color.Red("%s", urls[i])
 			}
 		}
-		p.AddTargetRequests(filteredUrl, "html")
+		//	p.AddTargetRequests(filteredUrl, "html")
 	} else {
-		filteredUrl = urls
+		for i := 0; i < len(urls); i++ {
+			urls[i] = AutofillUrl(targetURL, urls[i])
+			if !strings.Contains(urls[i], "javascript") {
+				filteredUrl = append(filteredUrl, urls[i])
+			}
+		}
+		//	p.AddTargetRequests(filteredUrl, "html")
 	}
 
 	if layer-1 > 0 {
@@ -79,11 +100,19 @@ func (object *SeekerProcessor) Finish() {
 	color.Yellow("store data to the db...")
 }
 
+//design for the need that change relative path to absolute path
+func AutofillUrl(targetUrl string, originUrl string) string {
+	if !strings.Contains(originUrl, "http") {
+		originUrl = targetUrl + originUrl
+	}
+	return originUrl
+}
+
 func main() {
 
 	sp := spider.NewSpider(NewSeeker(), "DoubanSeeker").AddUrl(domain, "html")
 	//domain's ROOT
-	req := request.NewRequest(domain, "html", "", "GET", "", nil, nil, nil, nil)
+	req := request.NewRequest(targetURL, "html", "", "GET", "", nil, nil, nil, nil)
 
 	//Run Client
 	cli.Run(new(argT), func(ctx *cli.Context) error {
@@ -93,13 +122,13 @@ func main() {
 		localFlag = argv.Zone
 
 		// layer = argv.Layer
-		pageItems := sp.SetThreadnum(4).SetScheduler(scheduler.NewQueueScheduler(true)).GetByRequest(req)
+		pageItems := sp.SetThreadnum(1).SetScheduler(scheduler.NewQueueScheduler(true)).SetSleepTime("rand", 800, 1500).GetByRequest(req)
 		//	sp.SetThreadnum(4).SetScheduler(scheduler.NewQueueScheduler(true)).AddPipeline(pipeline.NewPipelineConsole()).Run()
 		// color.Red("%d", layer)
 
 		fmt.Println("-----------------------------------Result---------------------------------")
 		for name, value := range pageItems.GetAll() {
-			color.Green(name + "\t:\t" + value + "\n")
+			color.Green(name + ":" + value + "\n")
 		}
 
 		return nil
