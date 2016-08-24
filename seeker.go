@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/fatih/color"
+	"github.com/garyburd/redigo/redis"
 	"github.com/hu17889/go_spider/core/common/page"
 	"github.com/hu17889/go_spider/core/common/request"
 	"github.com/hu17889/go_spider/core/scheduler"
@@ -22,11 +25,15 @@ type argT struct {
 	// stroe bool `cli:"!stroe" usage:"use this command to stroe the url "`
 }
 
+const domain = "zafu.edu.cn"
+const targetURL = "http://www.zafu.edu.cn/"
+const regularHref = `href="(.*?)"`
+const regularAction = `action="(.*?)"`
+const regularDataAction = `data-action="(.*?)"`
+
 //crawl layer
 var layer int
 var urls []string
-var domain = "nxzx.net"
-var targetURL = "http://www.nxzx.net/"
 
 //  seeker  --la 	 default is OFF
 var localFlag bool
@@ -47,74 +54,116 @@ func (object *SeekerProcessor) Process(p *page.Page) {
 		color.Red(p.Errormsg())
 		return
 	}
-	query := p.GetHtmlParser()
-	//CASE:<a href="" />
-	query.Find("a").Each(func(i int, s *goquery.Selection) {
-		value, _ := s.Attr("href")
-		// name := s.Text()
+
+	// IDEA: regexp solution
+
+	body := p.GetBodyStr()
+	//href
+	patternHref := regexp.MustCompile(regularHref)
+	matchURLs := patternHref.FindAllStringSubmatch(body, -1)
+	for i := 0; i < len(matchURLs); i++ {
+		//handle the single URL
+		value := matchURLs[i][1]
+		value = RemoveSlashFilter(value)
 		urls = append(urls, value)
+		//ATOMIC OP
+		// lock := &sync.Mutex{}
+		// lock.Lock()
+		// err := SQLmapcall(value)
+		// lock.Unlock()
+		// if err != nil {
+		// 	color.Red("%s", err)
+		// }
+	}
 
-		// p.AddField(name, value)
+	//action
+	patternAction := regexp.MustCompile(regularAction)
+	matchAction := patternAction.FindAllStringSubmatch(body, -1)
 
-	})
-	//CASE:<form action=""></form>
-	query.Find("form").Each(func(i int, s *goquery.Selection) {
+	patternDataAction := regexp.MustCompile(regularDataAction)
+	matchDataAction := patternDataAction.FindAllStringSubmatch(body, -1)
+	//data-action
+	for _, v := range matchDataAction {
+		matchAction = append(matchAction, v)
+	}
 
-		value, _ := s.Attr("action")
+	for i := 0; i < len(matchAction); i++ {
+		//handle the single URL
+		value := matchAction[i][1]
+		//ATOMIC OP
+		lock := &sync.Mutex{}
 		value = AutofillURL(targetURL, value)
 
-		//TODO:sqlmap insert here
+		//redis  GET
 
-		taskerid, err := scanner.NewTasker()
+		conn, err := redis.Dial("tcp", ":6379")
 		if err != nil {
 			color.Red("%s", err)
 		}
 
-		isStart, err := scanner.StartTasker(taskerid, value)
+		data, err := conn.Do("GET", value)
 		if err != nil {
 			color.Red("%s", err)
 		}
-
-		if isStart {
-			color.Green("一个新的Tasker开启了....")
-		}
-
-		Res, err := scanner.GetResultFromTasker(taskerid)
-		if err != nil {
-			color.Red("%s", err)
-		}
-		if len(Res) > 0 {
-			for _, v := range Res {
-				color.Green(v + " ")
+		if data == nil {
+			color.Blue("待测URL:" + value)
+			lock.Lock()
+			err := SQLmapcall(value)
+			lock.Unlock()
+			if err != nil {
+				color.Red("%s", err)
 			}
-		} else {
-			color.Cyan("并没有什么卵的漏洞....")
 		}
 
-		// method, _ := s.Attr("method")
-		// // NOTE: SQL injection here
-		// if method == "get" {
-		// 	params := GetChildsWithTag("input", s)
-		// 	AttackParams := "4%'and 1=2 and '%' ='"
-		// 	ATKURL := GenerateATKURL(AttackParams, params)
-		// 	color.Green(value + ATKURL)
-		// 	//REQUEST
-		// 	resp, err := http.Get(value + ATKURL)
-		// 	resp1, err := http.Get(value + ATKURL)
-		// 	if err != nil {
-		// 		color.Red("%s", err)
-		// 	}
-		// 	if resp.StatusCode == 200 && resp1.StatusCode == 200 {
-		// 		p.AddField(value+ATKURL, ": searchbar SQL injection test pass!")
-		// 	} else {
-		// 		p.AddField(value+ATKURL, resp.Status+"\t"+resp1.Status)
-		// 	}
+		// lock.Lock()
+		// err := SQLmapcall(value)
+		// lock.Unlock()
+		// if err != nil {
+		// 	color.Red("%s", err)
 		// }
-		//add form object to scheduler
-		urls = append(urls, value)
-	})
 
-	//过滤URLS
+	}
+
+	/*
+
+		// IDEA: goquery	 solution
+			query := p.GetHtmlParser()
+
+			//CASE:<a href="" />
+			query.Find("a").Each(func(i int, s *goquery.Selection) {
+				value, _ := s.Attr("href")
+				value = RemoveSlashFilter(value)
+				// name := s.Text()
+				urls = append(urls, value)
+
+				// p.AddField(name, value)
+				// err := SQLmapcall(value)
+				// if err != nil {
+				// 	color.Red("%s", err)
+				// }
+			})
+
+		//CASE:<form action=""></form>
+		query.Find("form").Each(func(i int, s *goquery.Selection) {
+			lock := &sync.Mutex{}
+			value, _ := s.Attr("action")
+			if value == "" {
+				value, _ = s.Attr("data-action")
+			}
+
+			value = AutofillURL(targetURL, value)
+
+			color.Blue("待测URL:" + value)
+			lock.Lock()
+			err := SQLmapcall(value)
+			lock.Unlock()
+			if err != nil {
+				color.Red("%s", err)
+			}
+
+		})
+	*/
+	//URLS  Filter
 	var filteredURL []string
 	//add urls to scheduler
 
@@ -150,12 +199,70 @@ func (object *SeekerProcessor) Finish() {
 	color.Yellow("store data to the db...")
 }
 
+//SQLmapcall call on the sqlmap srcipt to connect with the sqlmap api
+func SQLmapcall(URL string) error {
+	//sqlmap middleware
+
+	conn, err := redis.Dial("tcp", ":6379")
+	if err != nil {
+		return err
+	}
+
+	taskerid, err := scanner.NewTasker()
+	if err != nil {
+		return err
+	}
+
+	isStart, err := scanner.StartTasker(taskerid, URL)
+	if err != nil {
+		return err
+	}
+
+	if isStart {
+		color.Green("一个新的Tasker开启了....")
+	}
+
+	Res, err := scanner.GetResultFromTasker(taskerid)
+	if err != nil {
+		return err
+	}
+	if len(Res) > 0 {
+		for _, v := range Res {
+			color.Green(v + " ")
+		}
+
+	} else {
+		color.Cyan("并没有什么卵的漏洞....")
+	}
+	//store into redis
+	_, err = conn.Do("SET", URL, "DUPLICATE")
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 //AutofillURL is designed for the need that change relative path to absolute path
 func AutofillURL(targetURL string, originURL string) string {
+	originURL = RemoveSlashFilter(originURL)
 	if !strings.Contains(originURL, "http") {
 		originURL = targetURL + originURL
 	}
 	return originURL
+}
+
+//RemoveSlashFilter remove the slash in front of the url
+func RemoveSlashFilter(targetURL string) string {
+	var b bytes.Buffer
+	URLbytes := []byte(targetURL)
+
+	for k, v := range URLbytes {
+		if k != 0 || v != '/' {
+			b.WriteByte(v)
+		}
+	}
+	return b.String()
 }
 
 //GetChildsWithTag Get Children tag with specific name
