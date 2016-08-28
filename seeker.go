@@ -58,6 +58,7 @@ func (object *SeekerProcessor) Process(p *page.Page) {
 	// IDEA: regexp solution
 
 	body := p.GetBodyStr()
+	// color.Blue("[DUMP]" + body)
 	//href
 	patternHref := regexp.MustCompile(regularHref)
 	matchURLs := patternHref.FindAllStringSubmatch(body, -1)
